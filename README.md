@@ -1,106 +1,117 @@
-# Tesla Stock Trading Agent
+# Tesla Stock Trading Simulation
 
-A machine learning-based trading agent for Tesla (TSLA) stocks that predicts price movements and makes trading decisions.
+This project implements a machine learning-based trading agent for Tesla (TSLA) stocks, focusing on the simulation period of March 24-28, 2025. The agent uses LSTM predictions to make trading decisions while adhering to specific trading rules and constraints.
 
 ## Project Overview
 
-This project implements a machine learning trading agent that:
-- Predicts Tesla stock price movements using historical data
-- Makes trading decisions (Buy, Sell, or Hold) based on ML predictions
-- Simulates trading with a starting capital of $10,000
-- Operates during the specified trading period (March 24-28, 2025)
-
-## Features
-
-- Historical data analysis and preprocessing
-- Technical indicator calculation
-- Machine learning model for price prediction
-- Trading strategy implementation
-- Performance tracking and evaluation
+- **Simulation Period**: March 24-28, 2025 (5 trading days)
+- **Initial Capital**: $10,000
+- **Transaction Fee**: 1% per trade
+- **Trading Rules**: Daily order submission with buy/sell/hold decisions
+- **Minimum Trade Size**: $100
 
 ## Project Structure
 
 ```
-├── data/               # Data storage directory
-├── src/               # Source code
-│   ├── data/         # Data processing modules
-│   ├── models/       # ML model implementations
-│   └── trading/      # Trading strategy modules
-├── config/           # Configuration files
-├── notebooks/        # Jupyter notebooks for analysis
-├── tests/           # Unit tests
-├── venv/            # Virtual environment
-└── setup.py         # Setup script
+├── src/
+│   ├── config/
+│   │   └── model_config.py     # Model configuration and feature definitions
+│   ├── data/
+│   │   └── data_processor.py   # Data preparation and technical indicators
+│   ├── models/
+│   │   └── lstm_model.py       # LSTM model architecture
+│   ├── utils/
+│   │   └── metrics.py          # Trading performance metrics
+│   ├── train.py                # Model training script
+│   └── trading_simulation.py   # Trading simulation implementation
+├── models/                     # Saved model checkpoints
+├── requirements.txt            # Project dependencies
+└── README.md                  # Project documentation
 ```
 
-## Setup
+## Trading Strategy
 
-### Option 1: Using the Setup Script (Recommended)
+The trading agent employs a conservative strategy with the following features:
+- LSTM-based return predictions
+- 5-day moving average trend analysis
+- Volatility-based trading restrictions
+- Position size management
+- Trading cooldown periods
+- Automatic final position liquidation
 
-1. Clone the repository
-2. Run the setup script:
-   ```bash
-   python setup.py
-   ```
-3. Activate the virtual environment:
-   - Windows:
-     ```bash
-     .\venv\Scripts\activate
-     ```
-   - Unix/MacOS:
-     ```bash
-     source ./venv/bin/activate
-     ```
+### Trading Rules
+1. **Buy Conditions**:
+   - Predicted return > 0.8%
+   - Positive trend confirmation
+   - Maximum 30% portfolio exposure
+   - 15% position sizing
+   
+2. **Sell Conditions**:
+   - Predicted return < -0.8%
+   - Negative trend
+   - 90% position liquidation
+   
+3. **Risk Management**:
+   - 2-day trading cooldown between trades
+   - No trading when volatility > 2%
+   - Minimum trade size of $100
+   - Maximum drawdown monitoring
 
-### Option 2: Manual Setup
+## Installation
 
-1. Clone the repository
-2. Create a virtual environment:
-   ```bash
-   python -m venv venv
-   ```
-3. Activate the virtual environment:
-   - Windows:
-     ```bash
-     .\venv\Scripts\activate
-     ```
-   - Unix/MacOS:
-     ```bash
-     source ./venv/bin/activate
-     ```
-4. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+1. Create a virtual environment:
+```bash
+python -m venv venv
+```
 
-## Running the Trading Agent
+2. Activate the virtual environment:
+- Windows:
+```bash
+.\venv\Scripts\activate
+```
+- Unix/MacOS:
+```bash
+source venv/bin/activate
+```
 
-1. Make sure your virtual environment is activated
-2. Train the model:
-   ```bash
-   python src/train_model.py
-   ```
-3. Run the trading agent:
-   ```bash
-   python src/main.py
-   ```
+3. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
 
-## Trading Rules
+## Usage
 
-- Starting capital: $10,000 USD
-- Transaction fee: 1% per trade
-- Trading period: March 24-28, 2025
-- Order submission deadline: 9:00 AM EST
-- Order execution: 10:00 AM EST
+1. Train the LSTM model:
+```bash
+python -m src.train
+```
+
+2. Run the trading simulation:
+```bash
+python -m src.trading_simulation
+```
 
 ## Performance Metrics
 
-The agent's performance is evaluated based on:
-- Final account balance
-- Transaction costs
-- Trading accuracy
-- Risk-adjusted returns
+The simulation tracks various performance metrics:
+- Total Return
+- Number of Trades
+- Transaction Fees
+- Portfolio Value
+- Sharpe Ratio
+- Maximum Drawdown
 
-## License
+## Model Features
 
-MIT License 
+The LSTM model uses various technical indicators including:
+- Price returns
+- Moving averages
+- RSI (Relative Strength Index)
+- MACD (Moving Average Convergence Divergence)
+- Bollinger Bands
+- Volume indicators
+- Trend strength indicators
+
+## Contributing
+
+This is an academic project for demonstration purposes. Feel free to use the code as a reference for similar trading simulations. 
