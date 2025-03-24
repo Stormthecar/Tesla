@@ -20,252 +20,239 @@ class TradingSimulator:
             transaction_fee (float): Transaction fee as a percentage (e.g., 0.01 for 1%)
         """
         self.initial_capital = initial_capital
-        self.current_capital = initial_capital
+        self.cash = initial_capital
         self.transaction_fee = transaction_fee
         self.shares = 0
         self.trades = []
-        self.daily_portfolio_value = []
+        self.trades_executed = 0
+        self.last_trade_day = None
+        
+        # Initialize data processor and model
+        self.data_processor = DataProcessor()
+        self.data = self.data_processor.prepare_data()
+        self.dates = self.data.index
+        self.prices = self.data['Close']
+        
+        # Initialize model
+        input_size = len(ModelConfig.get_all_features())
+        self.predictor = StockPredictor(input_size=input_size)
+        self.predictor.load_model('models/lstm_model.pth')
+        self.predictor.model.eval()
         
     def calculate_portfolio_value(self, current_price):
         """Calculate total portfolio value."""
-        return self.current_capital + (self.shares * current_price)
+        return self.cash + (self.shares * current_price)
     
-    def execute_trade(self, action, amount, price, timestamp):
-        """
-        Execute a trade based on the action and amount.
+    def calculate_portfolio_exposure(self):
+        """Calculate current portfolio exposure to stock."""
+        if self.shares <= 0:
+            return 0
+        current_price = self.prices[self.dates[-1]]
+        portfolio_value = self.calculate_portfolio_value(current_price)
+        return (self.shares * current_price) / portfolio_value if portfolio_value > 0 else 0
+    
+    def calculate_buy_amount(self, current_price, position_size):
+        """Calculate number of shares to buy based on position size."""
+        available_cash = self.cash * position_size
+        if available_cash < 100:  # Minimum trade size
+            return 0
+        fee = self.transaction_fee * available_cash
+        net_cash = available_cash - fee
+        return int(net_cash / current_price)
+    
+    def calculate_trend(self, date, window=5):
+        """Calculate price trend."""
+        idx = self.dates.get_loc(date)
+        if idx < window:
+            return 0
+        prices = self.prices[idx-window:idx]
+        return (prices.iloc[-1] - prices.iloc[0]) / prices.iloc[0]
+    
+    def calculate_volatility(self, date, window=5):
+        """Calculate price volatility."""
+        idx = self.dates.get_loc(date)
+        if idx < window:
+            return 0
+        prices = self.prices[idx-window:idx]
+        returns = np.diff(prices) / prices[:-1]
+        return np.std(returns)
+    
+    def predict_return(self, date):
+        """Get model prediction for a specific date."""
+        idx = self.dates.get_loc(date)
         
-        Args:
-            action (str): 'buy' or 'sell'
-            amount (float): For buy: dollar amount, For sell: number of shares
-            price (float): Current stock price
-            timestamp (datetime): Time of trade
+        # Get the sequence length from model config
+        sequence_length = 10  # Default sequence length
+        
+        # Ensure we have enough data for the sequence
+        if idx < sequence_length:
+            return 0
             
-        Returns:
-            bool: Whether the trade was executed successfully
-        """
-        if action == 'buy':
-            # Calculate maximum shares we can buy with the amount
-            fee = self.transaction_fee * amount
-            available_amount = amount - fee
+        # Create sequence for prediction
+        data_window = self.data.iloc[idx-sequence_length:idx]
+        features = self.data_processor.create_sequences(data_window)[0]
+        
+        if len(features) == 0:
+            return 0
             
-            if available_amount <= 0 or amount > self.current_capital:
+        # Make prediction
+        with torch.no_grad():
+            features_tensor = torch.FloatTensor(features).to(self.predictor.device)
+            prediction, _ = self.predictor.model(features_tensor)
+            return prediction.cpu().squeeze().item()
+    
+    def print_trading_metrics(self, simulation_data):
+        """Print final trading metrics."""
+        if not simulation_data:
+            return
+            
+        initial_value = self.initial_capital
+        final_value = simulation_data[-1]['portfolio_value']
+        total_return = ((final_value - initial_value) / initial_value) * 100
+        
+        print("\n=== Trading Simulation Results ===")
+        print(f"Period: {simulation_data[0]['date'].strftime('%Y-%m-%d')} to {simulation_data[-1]['date'].strftime('%Y-%m-%d')}")
+        print(f"Initial Capital: ${initial_value:,.2f}")
+        print(f"Final Value: ${final_value:,.2f}")
+        print(f"Total Return: {total_return:.2f}%")
+        print(f"Number of Trades: {self.trades_executed}")
+        print(f"Transaction Fees Paid: ${sum(t['fee'] for t in self.trades):,.2f}")
+        
+    def execute_trade(self, shares, price, action):
+        """Execute a trade."""
+        if shares == 0:
+            return False
+            
+        if action == "BUY":
+            cost = shares * price
+            fee = cost * self.transaction_fee
+            total_cost = cost + fee
+            
+            if total_cost > self.cash:
                 return False
                 
-            shares_to_buy = available_amount / price
-            total_cost = amount  # Amount includes the fee
-            
-            self.shares += shares_to_buy
-            self.current_capital -= total_cost
-            
-            self.trades.append({
-                'timestamp': timestamp,
-                'action': 'buy',
-                'shares': shares_to_buy,
-                'price': price,
-                'fee': fee,
-                'total_value': total_cost
-            })
+            self.cash -= total_cost
+            self.shares += shares
+            self.trades.append({'shares': shares, 'price': price, 'fee': fee})
             return True
             
-        elif action == 'sell':
-            if amount <= 0 or amount > self.shares:
+        elif action == "SELL":
+            if abs(shares) > self.shares:
                 return False
                 
-            sale_value = amount * price
-            fee = self.transaction_fee * sale_value
-            net_proceeds = sale_value - fee
+            proceeds = abs(shares) * price
+            fee = proceeds * self.transaction_fee
+            net_proceeds = proceeds - fee
             
-            self.shares -= amount
-            self.current_capital += net_proceeds
-            
-            self.trades.append({
-                'timestamp': timestamp,
-                'action': 'sell',
-                'shares': amount,
-                'price': price,
-                'fee': fee,
-                'total_value': net_proceeds
-            })
+            self.cash += net_proceeds
+            self.shares += shares  # shares is negative for sells
+            self.trades.append({'shares': shares, 'price': price, 'fee': fee})
             return True
             
         return False
     
-    def get_trading_metrics(self):
-        """Calculate trading performance metrics."""
-        if not self.daily_portfolio_value:
-            return {}
+    def generate_trading_advice(self, date, i, total_days):
+        """Generate trading advice for 9:00 AM submission."""
+        predicted_return = self.predict_return(date)
+        trend = self.calculate_trend(date, window=5)
+        volatility = self.calculate_volatility(date, window=5)
         
-        initial_value = self.initial_capital
-        final_value = self.daily_portfolio_value[-1]
-        returns = (final_value - initial_value) / initial_value
+        # More aggressive position sizing
+        max_buy_amount = self.cash * 0.4  # Increased from 0.3 to 0.4
         
-        daily_returns = pd.Series([
-            (v2 - v1) / v1 
-            for v1, v2 in zip(self.daily_portfolio_value[:-1], self.daily_portfolio_value[1:])
-        ])
+        # Lower thresholds for trading
+        if predicted_return > 0.005 and trend > 0 and self.calculate_portfolio_exposure() < 0.4:  # Lowered from 0.008
+            if self.cash >= 100:  # Minimum trade size check
+                return f"Buy: ${min(max_buy_amount, self.cash):.2f}"
+        elif predicted_return < -0.005 or trend < 0:  # Lowered from -0.008
+            if self.shares > 0:
+                shares_to_sell = int(self.shares * 0.9)
+                if shares_to_sell > 0:
+                    return f"Sell: {shares_to_sell} shares"
         
-        metrics = {
-            'total_return': returns * 100,
-            'total_trades': len(self.trades),
-            'total_fees_paid': sum(trade['fee'] for trade in self.trades),
-            'final_portfolio_value': final_value,
-            'sharpe_ratio': np.mean(daily_returns) / np.std(daily_returns) if len(daily_returns) > 0 else 0,
-            'max_drawdown': self._calculate_max_drawdown(),
-        }
+        # Force a buy on second-to-last day if no trades have occurred
+        if self.trades_executed == 0 and i == total_days - 2 and self.cash >= 100:
+            forced_amount = self.cash * 0.5  # More aggressive forced trade
+            return f"Buy: ${forced_amount:.2f} (Forced)"
         
-        return metrics
-    
-    def _calculate_max_drawdown(self):
-        """Calculate maximum drawdown from portfolio value history."""
-        if not self.daily_portfolio_value:
-            return 0
-        
-        peak = self.daily_portfolio_value[0]
-        max_drawdown = 0
-        
-        for value in self.daily_portfolio_value:
-            if value > peak:
-                peak = value
-            drawdown = (peak - value) / peak
-            max_drawdown = max(max_drawdown, drawdown)
-        
-        return max_drawdown * 100
+        return "Hold: No transaction"
 
-def run_simulation(days=5):
-    """
-    Run trading simulation for the specified number of days.
-    
-    Args:
-        days (int): Number of last trading days to simulate
-    """
-    # Initialize components
-    processor = DataProcessor()
-    data = processor.prepare_data()
-    simulator = TradingSimulator()
-    
-    # Get feature dimension from config
-    input_size = len(ModelConfig.get_all_features())
-    
-    # Load the trained model
-    predictor = StockPredictor(input_size=input_size)
-    predictor.load_model('models/lstm_model.pth')
-    predictor.model.eval()
-    
-    # Get last n days of data
-    simulation_data = data.tail(days)
-    
-    print("\n=== Trading Simulation ===")
-    print(f"Period: {simulation_data.index[0].strftime('%Y-%m-%d')} to {simulation_data.index[-1].strftime('%Y-%m-%d')}")
-    print(f"Initial Capital: ${simulator.initial_capital:,.2f}")
-    print(f"Transaction Fee: {simulator.transaction_fee*100}%")
-    print("\nDaily Trading Activity:")
-    print("-" * 100)
-    
-    # Create sequences for prediction
-    feature_data = processor.create_sequences(data)[0]
-    
-    # Track moving average of predictions for trend
-    prediction_history = []
-    price_history = []
-    last_trade_day = None
-    cooldown_days = 2  # Wait at least 2 days between trades
-    
-    # Simulate trading for each day
-    for i, (timestamp, row) in enumerate(simulation_data.iterrows()):
-        current_price = row['Close']
-        price_history.append(current_price)
+    def execute_order(self, date, order_type, amount, execution_price):
+        """Execute order at 10:00 AM."""
+        if order_type == "Buy":
+            # Convert dollar amount to shares
+            shares = int(float(amount.replace("$", "")) / execution_price)
+            if shares > 0:
+                if self.execute_trade(shares, execution_price, "BUY"):
+                    return f"Executed: Buy {shares} shares at ${execution_price:.2f}"
+        elif order_type == "Sell":
+            shares = int(amount)
+            if shares > 0:
+                if self.execute_trade(-shares, execution_price, "SELL"):
+                    return f"Executed: Sell {shares} shares at ${execution_price:.2f}"
+        return "No execution"
+
+    def run_simulation(self, days=5):
+        """Run the trading simulation with specific timing requirements."""
+        self.trades_executed = 0
+        simulation_data = []
         
-        # Get model prediction
-        with torch.no_grad():
-            features = torch.FloatTensor(feature_data[-(days-i)-1:-(days-i)]).to(predictor.device) if i < days-1 else torch.FloatTensor(feature_data[-1:]).to(predictor.device)
-            prediction, _ = predictor.model(features)
-            prediction = prediction.cpu().squeeze().item()
+        # Ensure we have enough data
+        available_days = len(self.dates)
+        if available_days < days:
+            print(f"Warning: Only {available_days} days available, using all available data")
+            days = available_days
         
-        # Track prediction history
-        prediction_history.append(prediction)
+        simulation_dates = self.dates[-days:]
+        print(f"\nSimulating trades from {simulation_dates[0].strftime('%Y-%m-%d')} to {simulation_dates[-1].strftime('%Y-%m-%d')}")
         
-        # Calculate prediction trend (5-day moving average)
-        pred_trend = np.mean(prediction_history[-5:]) if len(prediction_history) >= 5 else prediction
+        for i, date in enumerate(simulation_dates):
+            print(f"\n=== Day {i+1}: {date.strftime('%Y-%m-%d')} ===")
+            
+            # 9:00 AM - Generate and submit trading advice
+            print("\n9:00 AM - Trading Advice Submission:")
+            advice = self.generate_trading_advice(date, i, days)
+            print(advice)
+            
+            # Parse the advice
+            order_type = advice.split(":")[0]
+            amount = advice.split(":")[1].strip().split(" ")[0] if ":" in advice else "0"
+            
+            # 10:00 AM - Execute orders
+            print("\n10:00 AM - Order Execution:")
+            execution_price = self.prices[date]
+            execution_result = self.execute_order(date, order_type, amount, execution_price)
+            print(execution_result)
+            
+            # Record daily data
+            daily_data = {
+                'date': date,
+                'price': execution_price,
+                'advice': advice,
+                'execution': execution_result,
+                'portfolio_value': self.calculate_portfolio_value(execution_price),
+                'cash': self.cash,
+                'shares': self.shares
+            }
+            simulation_data.append(daily_data)
+            
+            print(f"\nEnd of Day Summary:")
+            print(f"Portfolio Value: ${daily_data['portfolio_value']:.2f}")
+            print(f"Cash: ${self.cash:.2f}")
+            print(f"Shares: {self.shares}")
+            
+            # Handle final day liquidation
+            if i == days - 1 and self.shares > 0:
+                print("\nFinal Day - Liquidating Position:")
+                if self.execute_trade(-self.shares, execution_price, "SELL"):
+                    print(f"Sold {self.shares} shares at ${execution_price:.2f}")
+                    daily_data['execution'] += f"\nLiquidated remaining {self.shares} shares"
+                    daily_data['portfolio_value'] = self.calculate_portfolio_value(execution_price)
+                    daily_data['cash'] = self.cash
+                    daily_data['shares'] = self.shares
         
-        # Calculate price volatility
-        price_volatility = np.std(price_history[-5:]) / np.mean(price_history[-5:]) if len(price_history) >= 5 else 0
-        
-        # Check if we're in cooldown period
-        in_cooldown = False
-        if last_trade_day is not None:
-            days_since_trade = (timestamp - last_trade_day).days
-            in_cooldown = days_since_trade < cooldown_days
-        
-        # Generate trading signal based on prediction, trend, and conditions
-        signal = generate_trading_signal(
-            prediction, 
-            pred_trend, 
-            price_volatility,
-            threshold=0.008,  # Increased threshold to 0.8%
-            volatility_threshold=0.02  # Don't trade if 5-day volatility > 2%
-        )
-        
-        # Don't trade if in cooldown
-        if in_cooldown:
-            signal = 'hold'
-        
-        # Execute trade based on signal
-        portfolio_value = simulator.calculate_portfolio_value(current_price)
-        trade_executed = False
-        
-        if signal == 'buy' and simulator.current_capital > 0:
-            # Only buy if we don't already have a significant position
-            current_exposure = (simulator.shares * current_price) / portfolio_value
-            if current_exposure < 0.3:  # Reduced maximum exposure to 30%
-                # Buy with 15% of available capital if prediction is positive
-                buy_amount = min(simulator.current_capital * 0.15, simulator.current_capital)
-                if buy_amount >= 100:  # Minimum trade size of $100
-                    trade_executed = simulator.execute_trade('buy', buy_amount, current_price, timestamp)
-        
-        elif signal == 'sell' and simulator.shares > 0:
-            # Sell 90% of shares if prediction is negative
-            shares_to_sell = simulator.shares * 0.9
-            if shares_to_sell * current_price >= 100:  # Minimum trade size of $100
-                trade_executed = simulator.execute_trade('sell', shares_to_sell, current_price, timestamp)
-        
-        # Update last trade day if a trade was executed
-        if trade_executed:
-            last_trade_day = timestamp
-        
-        # Record daily portfolio value
-        portfolio_value = simulator.calculate_portfolio_value(current_price)
-        simulator.daily_portfolio_value.append(portfolio_value)
-        
-        # Print daily summary
-        print(f"Date: {timestamp.strftime('%Y-%m-%d')}")
-        print(f"Price: ${current_price:.2f}")
-        print(f"Predicted Return: {prediction:.4f}")
-        print(f"Prediction Trend: {pred_trend:.4f}")
-        print(f"Price Volatility: {price_volatility:.4f}")
-        print(f"Action: {signal.upper()}")
-        print(f"Portfolio Value: ${portfolio_value:,.2f}")
-        print(f"Cash: ${simulator.current_capital:,.2f}")
-        print(f"Shares: {simulator.shares:.4f}")
-        if in_cooldown:
-            print(f"In trade cooldown ({cooldown_days - days_since_trade} days remaining)")
-        print("-" * 100)
-    
-    # Sell all remaining shares at the end
-    if simulator.shares > 0:
-        simulator.execute_trade('sell', simulator.shares, current_price, timestamp)
-        final_portfolio_value = simulator.calculate_portfolio_value(current_price)
-        simulator.daily_portfolio_value[-1] = final_portfolio_value
-    
-    # Calculate and display final metrics
-    metrics = simulator.get_trading_metrics()
-    
-    print("\nFinal Trading Metrics:")
-    print(f"Total Return: {metrics['total_return']:.2f}%")
-    print(f"Number of Trades: {metrics['total_trades']}")
-    print(f"Total Fees Paid: ${metrics['total_fees_paid']:.2f}")
-    print(f"Final Portfolio Value: ${metrics['final_portfolio_value']:,.2f}")
-    print(f"Sharpe Ratio: {metrics['sharpe_ratio']:.2f}")
-    print(f"Maximum Drawdown: {metrics['max_drawdown']:.2f}%")
+        self.print_trading_metrics(simulation_data)
+        return simulation_data
 
 def generate_trading_signal(predicted_return, pred_trend, price_volatility, threshold=0.008, volatility_threshold=0.02):
     """
@@ -295,4 +282,5 @@ def generate_trading_signal(predicted_return, pred_trend, price_volatility, thre
         return 'hold'
 
 if __name__ == "__main__":
-    run_simulation()  # Default is last 5 trading days 
+    simulator = TradingSimulator()
+    simulator.run_simulation() 

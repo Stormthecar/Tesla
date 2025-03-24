@@ -1,13 +1,20 @@
 # Tesla Stock Trading Simulation
 
-This project implements a machine learning-based trading agent for Tesla (TSLA) stocks, focusing on the simulation period of March 24-28, 2025. The agent uses LSTM predictions to make trading decisions while adhering to specific trading rules and constraints.
+This project implements a machine learning-based trading agent for Tesla (TSLA) stocks, with dual functionality for real-time trading during market hours and simulation testing for March 24-28, 2025. The agent uses LSTM predictions to make trading decisions while adhering to specific trading rules and constraints.
 
 ## Project Overview
 
-- **Simulation Period**: March 24-28, 2025 (5 trading days)
+### Real-Time Trading
+- **Trading Hours**: 9:30 AM - 4:00 PM EST (Market Hours)
+- **Price Data**: Real-time TSLA stock prices from Yahoo Finance
+- **State Management**: Maintains portfolio state between trading sessions
+- **Action Logging**: Records all trading decisions and executions
+
+### Simulation Testing
+- **Test Period**: March 24-28, 2025 (5 trading days)
+- **Test Prices**: Predefined daily prices for testing
 - **Initial Capital**: $10,000
 - **Transaction Fee**: 1% per trade
-- **Trading Rules**: Daily order submission with buy/sell/hold decisions
 - **Minimum Trade Size**: $100
 
 ## Project Structure
@@ -23,8 +30,10 @@ This project implements a machine learning-based trading agent for Tesla (TSLA) 
 │   ├── utils/
 │   │   └── metrics.py          # Trading performance metrics
 │   ├── train.py                # Model training script
-│   └── trading_simulation.py   # Trading simulation implementation
+│   └── march_simulation.py     # Trading simulation with real-time capabilities
 ├── models/                     # Saved model checkpoints
+├── simulation_state.json       # Current portfolio state
+├── trading_actions.json        # Trading history and actions
 ├── requirements.txt            # Project dependencies
 └── README.md                  # Project documentation
 ```
@@ -35,27 +44,25 @@ The trading agent employs a conservative strategy with the following features:
 - LSTM-based return predictions
 - 5-day moving average trend analysis
 - Volatility-based trading restrictions
-- Position size management
-- Trading cooldown periods
+- Position size management (30-50% of portfolio)
+- Guaranteed execution of at least one trade
 - Automatic final position liquidation
 
 ### Trading Rules
 1. **Buy Conditions**:
-   - Predicted return > 0.8%
-   - Positive trend confirmation
-   - Maximum 30% portfolio exposure
-   - 15% position sizing
+   - Initial trade: 30% of portfolio
+   - Normal trades: Up to 40% of portfolio
+   - Forced trade if no trades by second-to-last day
+   - Minimum trade size of $100
    
 2. **Sell Conditions**:
-   - Predicted return < -0.8%
-   - Negative trend
-   - 90% position liquidation
+   - 90% position liquidation when selling
+   - Complete liquidation on final day
    
 3. **Risk Management**:
-   - 2-day trading cooldown between trades
-   - No trading when volatility > 2%
-   - Minimum trade size of $100
-   - Maximum drawdown monitoring
+   - Portfolio exposure tracking
+   - Transaction fee consideration
+   - State persistence between sessions
 
 ## Installation
 
@@ -81,36 +88,42 @@ pip install -r requirements.txt
 
 ## Usage
 
-1. Train the LSTM model:
+### Real-Time Trading
+Run the simulation during market hours (9:30 AM - 4:00 PM EST):
 ```bash
-python -m src.train
+python -m src.march_simulation
+```
+The simulation will use real-time TSLA prices from Yahoo Finance.
+
+### Testing Mode
+Test specific dates in the March 24-28, 2025 period:
+```bash
+python -m src.march_simulation 2025-03-24  # Test March 24
+python -m src.march_simulation 2025-03-25  # Test March 25
+# etc...
 ```
 
-2. Run the trading simulation:
-```bash
-python -m src.trading_simulation
-```
+### State Management
+- `simulation_state.json`: Maintains portfolio state (cash, shares, trades)
+- `trading_actions.json`: Records all trading actions and their results
 
 ## Performance Metrics
 
 The simulation tracks various performance metrics:
-- Total Return
-- Number of Trades
-- Transaction Fees
-- Portfolio Value
-- Sharpe Ratio
-- Maximum Drawdown
+- Daily Portfolio Value
+- Cash Position
+- Number of Shares
+- Total Trades Executed
+- Transaction Fees Paid
+- Day's Return Percentage
 
-## Model Features
+## Dependencies
 
-The LSTM model uses various technical indicators including:
-- Price returns
-- Moving averages
-- RSI (Relative Strength Index)
-- MACD (Moving Average Convergence Divergence)
-- Bollinger Bands
-- Volume indicators
-- Trend strength indicators
+- pandas: Data manipulation and analysis
+- numpy: Numerical computations
+- torch: LSTM model implementation
+- yfinance: Real-time stock data
+- pytz: Timezone handling for market hours
 
 ## Contributing
 
